@@ -2,9 +2,9 @@ paths: "configs/paths.yaml"
 
 num_frames: 16
 input_size: 192
-train_batch_size: 4
-val_batch_size: 4
-num_workers: 4
+train_batch_size: 2
+val_batch_size: 2
+num_workers: 2
 
 model_name: "videomae"
 hf_model_id: "MCG-NJU/videomae-base"
