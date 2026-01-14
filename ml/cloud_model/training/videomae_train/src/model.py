@@ -47,12 +47,19 @@ def build_model(cfg: Dict[str, Any]) -> Tuple[nn.Module, Dict[str, Any]]:
             if num_frames is not None:
                 config.num_frames = int(num_frames)
 
-        model = VideoMAEForVideoClassification.from_pretrained(
-            hf_model_id,
-            config=config,
-            num_labels=num_classes,
-            ignore_mismatched_sizes=True,
-        )
+        if config is not None:
+            config.num_labels = num_classes
+            model = VideoMAEForVideoClassification.from_pretrained(
+                hf_model_id,
+                config=config,
+                ignore_mismatched_sizes=True,
+            )
+        else:
+            model = VideoMAEForVideoClassification.from_pretrained(
+                hf_model_id,
+                num_labels=num_classes,
+                ignore_mismatched_sizes=True,
+            )
 
         # Optional dropout override
         dropout = cfg.get("dropout", None)

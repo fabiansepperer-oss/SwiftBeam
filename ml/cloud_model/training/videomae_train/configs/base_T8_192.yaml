@@ -4,8 +4,8 @@ paths: "configs/paths.yaml"
 # Data
 num_frames: 8
 input_size: 192
-train_batch_size: 6
-val_batch_size: 6
+train_batch_size: 4
+val_batch_size: 4
 num_workers: 4
 
 # Model
