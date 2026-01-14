@@ -36,8 +36,20 @@ def build_model(cfg: Dict[str, Any]) -> Tuple[nn.Module, Dict[str, Any]]:
             return model, preprocess_info
 
         hf_model_id = cfg.get("hf_model_id", "MCG-NJU/videomae-base")
+        config = None
+        input_size = cfg.get("input_size", None)
+        num_frames = cfg.get("num_frames", None)
+        if input_size is not None or num_frames is not None:
+            from transformers import VideoMAEConfig
+            config = VideoMAEConfig.from_pretrained(hf_model_id)
+            if input_size is not None:
+                config.image_size = int(input_size)
+            if num_frames is not None:
+                config.num_frames = int(num_frames)
+
         model = VideoMAEForVideoClassification.from_pretrained(
             hf_model_id,
+            config=config,
             num_labels=num_classes,
             ignore_mismatched_sizes=True,
         )
