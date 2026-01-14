@@ -1,0 +1,9 @@
+
+opencv-python
+numpy
+pyyaml
+tqdm
+scikit-learn
+transformers
+accelerate
+

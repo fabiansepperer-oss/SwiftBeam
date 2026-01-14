@@ -1,0 +1,30 @@
+# Includes
+paths: "configs/paths.yaml"
+
+# Data
+num_frames: 8
+input_size: 192
+train_batch_size: 6
+val_batch_size: 6
+num_workers: 4
+
+# Model
+model_name: "videomae"     # videomae | r3d18_fallback
+hf_model_id: "MCG-NJU/videomae-base"  # used if model_name=videomae
+num_classes: 2
+dropout: 0.0
+
+# Training
+epochs: 20
+lr: 0.00005
+weight_decay: 0.05
+warmup_epochs: 1
+amp: true
+seed: 1337
+
+# Logging and checkpoints
+exp_name: "exp_base_T8_192"
+log_every: 20
+eval_every: 1
+save_every: 1
+early_stop_patience: 5

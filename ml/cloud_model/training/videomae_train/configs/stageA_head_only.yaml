@@ -1,0 +1,6 @@
+# Use one of the base configs as the "main" and then override with this file, or just copy fields.
+freeze_backbone: true
+unfreeze_last_n_blocks: 0
+lr: 0.0002
+epochs: 5
+exp_name: "exp_stageA_head_only"

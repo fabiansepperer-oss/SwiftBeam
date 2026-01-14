@@ -1,0 +1,25 @@
+paths: "configs/paths.yaml"
+
+num_frames: 16
+input_size: 192
+train_batch_size: 4
+val_batch_size: 4
+num_workers: 4
+
+model_name: "videomae"
+hf_model_id: "MCG-NJU/videomae-base"
+num_classes: 2
+dropout: 0.0
+
+epochs: 20
+lr: 0.00005
+weight_decay: 0.05
+warmup_epochs: 1
+amp: true
+seed: 1337
+
+exp_name: "exp_base_T16_192"
+log_every: 20
+eval_every: 1
+save_every: 1
+early_stop_patience: 5

@@ -1,0 +1,4 @@
+# Absolute or relative paths are fine.
+data_root: "data/dataset"
+outputs_root: "outputs"
+pretrained_dir: "pretrained"

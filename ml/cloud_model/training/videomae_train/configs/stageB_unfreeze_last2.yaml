@@ -1,0 +1,5 @@
+freeze_backbone: false
+unfreeze_last_n_blocks: 2
+lr: 0.00005
+epochs: 10
+exp_name: "exp_stageB_unfreeze_last2"
