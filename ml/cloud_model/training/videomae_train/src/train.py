@@ -56,6 +56,17 @@ def maybe_freeze(model, cfg: Dict) -> None:
             p.requires_grad = True
 
 
+def compute_class_weights(samples, num_classes: int) -> torch.Tensor:
+    counts = torch.zeros(num_classes, dtype=torch.float32)
+    for s in samples:
+        counts[int(s.label)] += 1.0
+    total = counts.sum()
+    # Inverse-frequency weights, normalized by number of classes.
+    weights = total / (counts * max(1, num_classes))
+    weights = torch.where(counts > 0, weights, torch.zeros_like(weights))
+    return weights
+
+
 def _sec_to_str(seconds: float) -> str:
     """Small helper to format seconds into a readable string."""
     if seconds < 60:
@@ -268,7 +279,13 @@ def main():
         return base * 0.5 * (1.0 + math.cos(math.pi * t))
 
     scaler = torch.cuda.amp.GradScaler(enabled=bool(cfg.get("amp", True)))
-    loss_fn = torch.nn.CrossEntropyLoss()
+    if bool(cfg.get("use_class_weights", False)):
+        weights = compute_class_weights(train_loader.dataset.samples, int(cfg["num_classes"]))
+        print(f"[INFO] class counts: {weights.numel()} classes")
+        print(f"[INFO] class weights: {weights.tolist()}")
+        loss_fn = torch.nn.CrossEntropyLoss(weight=weights.to(device))
+    else:
+        loss_fn = torch.nn.CrossEntropyLoss()
 
     if args.bench_only:
         bench_stats = benchmark_steps(
