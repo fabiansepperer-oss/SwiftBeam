@@ -225,6 +225,11 @@ def main():
     ap.add_argument("--config", required=True, help="Path to base config yaml")
     ap.add_argument("--override", default=None, help="Optional override yaml (stageA, stageB, etc)")
     ap.add_argument("--test_after", action="store_true", help="Run test set after training")
+    ap.add_argument(
+        "--init_from",
+        default=None,
+        help="Initialize model weights from a checkpoint (weights-only, no optimizer)",
+    )
     ap.add_argument("--bench_steps", type=int, default=100, help="Number of steps to run benchmark over")
     ap.add_argument(
         "--bench_only",
@@ -259,6 +264,11 @@ def main():
     model, _ = build_model(cfg)
     maybe_freeze(model, cfg)
     model.to(device)
+    if args.init_from:
+        ckpt = torch.load(args.init_from, map_location="cpu")
+        state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        model.load_state_dict(state, strict=True)
+        print(f"[INFO] init_from loaded: {args.init_from}")
 
     # Optimizer over trainable params only
     params = [p for p in model.parameters() if p.requires_grad]
