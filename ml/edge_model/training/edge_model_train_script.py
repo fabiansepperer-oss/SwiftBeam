@@ -136,9 +136,13 @@ class ClipFolderDataset(Dataset):
         if len(self.samples) == 0:
             raise RuntimeError(f"No valid clips found under: {split_dir}")
 
-        # ImageNet normalization for pretrained backbone
-        mean = MobileNet_V3_Large_Weights.DEFAULT.meta["mean"]
-        std = MobileNet_V3_Large_Weights.DEFAULT.meta["std"]
+        # ImageNet normalization for pretrained backbone (fallback for older torchvision)
+        mean = getattr(MobileNet_V3_Large_Weights.DEFAULT, "meta", {}).get(
+            "mean", (0.485, 0.456, 0.406)
+        )
+        std = getattr(MobileNet_V3_Large_Weights.DEFAULT, "meta", {}).get(
+            "std", (0.229, 0.224, 0.225)
+        )
 
         self.base_tf = transforms.Compose([
             transforms.Resize((H, W), antialias=True),
