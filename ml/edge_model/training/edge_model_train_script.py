@@ -43,7 +43,8 @@ class CFG:
 
     # Training
     batch_size: int = 8
-    num_workers: int = 4
+    # On Jetson, PyAV can segfault in multi-worker dataloaders; default to 0.
+    num_workers: int = 0
     epochs: int = 20
     lr_backbone: float = 1e-4
     lr_head: float = 5e-4
@@ -192,7 +193,7 @@ class ClipFolderDataset(Dataset):
         clip = []
 
         if kind == "video":
-            video, _, _ = read_video(sample)  # [T, H, W, C]
+            video, _, _ = read_video(sample, pts_unit="sec")  # [T, H, W, C]
             if video.numel() == 0:
                 raise RuntimeError(f"Empty video: {sample}")
             inds = self._sample_indices(video.shape[0])
@@ -351,7 +352,10 @@ def train():
     pos_weight = torch.tensor([cfg.pos_weight], device=device)
     crit = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(cfg.amp and device.type == "cuda"))
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler(device.type, enabled=(cfg.amp and device.type == "cuda"))
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=(cfg.amp and device.type == "cuda"))
 
     best_val_acc = 0.0
     os.makedirs("checkpoints", exist_ok=True)
