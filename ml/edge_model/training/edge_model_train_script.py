@@ -500,6 +500,9 @@ def train():
             return torch.cuda.amp.autocast(enabled=(cfg.amp and device.type == "cuda"))
 
     best_val_f1 = -1.0
+    epochs_no_improve = 0
+    patience = 3
+    min_delta = 0.005
     global_step = 0
 
     for epoch in range(1, cfg.epochs + 1):
@@ -569,12 +572,22 @@ def train():
             f"TP={val_metrics['tp']} TN={val_metrics['tn']} FP={val_metrics['fp']} FN={val_metrics['fn']}"
         )
 
+        improved = val_metrics["f1"] > best_val_f1 + min_delta
         if val_metrics["f1"] > best_val_f1:
             best_val_f1 = val_metrics["f1"]
             torch.save(
                 {"model": model.state_dict(), "cfg": cfg.__dict__, "best_val_f1": best_val_f1},
                 ckpt_dir / "best.pt"
             )
+        if improved:
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(
+                    f"Early stopping at epoch {epoch} | best_val_f1={best_val_f1:.3f}"
+                )
+                break
 
     print("Best val_f1:", best_val_f1)
     print("Logs written to:", logs_path)
