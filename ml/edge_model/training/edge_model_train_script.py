@@ -465,7 +465,13 @@ def train():
     ], weight_decay=cfg.weight_decay)
 
     # Imbalance handling (TRAIN only)
-    pos_weight = torch.tensor([cfg.pos_weight], device=device)
+    pos_count = sum(int(y) for _, y, _ in train_ds.samples)
+    neg_count = len(train_ds.samples) - pos_count
+    if pos_count > 0:
+        pos_weight_val = neg_count / max(pos_count, 1)
+    else:
+        pos_weight_val = 1.0
+    pos_weight = torch.tensor([pos_weight_val], device=device)
     crit = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # AMP setup (works across torch versions)
