@@ -206,10 +206,7 @@ class ClipFolderDataset(Dataset):
         ])
 
         # Mild augmentations (train only)
-        self.aug_tf = transforms.Compose([
-            transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.5),
-            transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.2),
-        ])
+        self.aug_tf = None
 
     def _preprocess_frame(self, img: torch.Tensor) -> torch.Tensor:
         img = img.to(torch.float32)
@@ -270,7 +267,7 @@ class ClipFolderDataset(Dataset):
                     img = img[:3]
 
                 img = self._preprocess_frame(img)
-                if self.train:
+                if self.train and self.aug_tf is not None:
                     img = self.aug_tf(img)
                 clip.append(img)
         else:
@@ -284,7 +281,7 @@ class ClipFolderDataset(Dataset):
                     img = img[:3]
 
                 img = self._preprocess_frame(img)
-                if self.train:
+                if self.train and self.aug_tf is not None:
                     img = self.aug_tf(img)
                 clip.append(img)
 
