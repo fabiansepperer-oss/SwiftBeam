@@ -68,6 +68,7 @@ class CFG:
 
     # Prediction threshold for metrics
     threshold: float = 0.5
+    debug_checks: bool = False
 
     extensions: Tuple[str, ...] = (".jpg", ".jpeg", ".png")
     video_extensions: Tuple[str, ...] = (".mp4", ".mov", ".avi")
@@ -201,7 +202,6 @@ class ClipFolderDataset(Dataset):
 
         self.base_tf = transforms.Compose([
             transforms.Resize((H, W), antialias=True),
-            transforms.ConvertImageDtype(torch.float32),
             transforms.Normalize(mean=mean, std=std),
         ])
 
@@ -210,6 +210,17 @@ class ClipFolderDataset(Dataset):
             transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.2),
         ])
+
+    def _preprocess_frame(self, img: torch.Tensor) -> torch.Tensor:
+        img = img.to(torch.float32)
+        if img.numel() > 0:
+            finite_max = torch.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0).max()
+            if finite_max > 1.5:
+                img = img / 255.0
+        img = torch.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
+        img = self.base_tf(img)
+        img = torch.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
+        return img
 
     def _min_frames_needed(self) -> int:
         # Need enough frames to take T with stride
@@ -258,7 +269,7 @@ class ClipFolderDataset(Dataset):
                 elif img.shape[0] > 3:
                     img = img[:3]
 
-                img = self.base_tf(img)
+                img = self._preprocess_frame(img)
                 if self.train:
                     img = self.aug_tf(img)
                 clip.append(img)
@@ -272,7 +283,7 @@ class ClipFolderDataset(Dataset):
                 elif img.shape[0] > 3:
                     img = img[:3]
 
-                img = self.base_tf(img)
+                img = self._preprocess_frame(img)
                 if self.train:
                     img = self.aug_tf(img)
                 clip.append(img)
@@ -350,7 +361,14 @@ def evaluate(model, loader, device, threshold: float = 0.5):
         x = x.to(device)
         y = y.to(device)
 
+        if hasattr(model, "cfg") and getattr(model.cfg, "debug_checks", False):
+            if not torch.isfinite(x).all():
+                raise ValueError("Non-finite values in eval inputs.")
         logits = model(x)
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
+        if hasattr(model, "cfg") and getattr(model.cfg, "debug_checks", False):
+            if not torch.isfinite(logits).all():
+                raise ValueError("Non-finite values in eval logits.")
         loss = crit(logits, y)
 
         loss_sum += loss.item() * x.size(0)
@@ -435,6 +453,7 @@ def train():
     )
 
     model = EdgeVideoModel().to(device)
+    model.cfg = cfg
 
     # Parameter groups: backbone vs head
     backbone_params = list(model.backbone_features.parameters())
@@ -472,11 +491,16 @@ def train():
         for x, y in train_loader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
+            if cfg.debug_checks and not torch.isfinite(x).all():
+                raise ValueError("Non-finite values in training inputs.")
 
             opt.zero_grad(set_to_none=True)
 
             with autocast_ctx():
                 logits = model(x)
+                logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
+                if cfg.debug_checks and not torch.isfinite(logits).all():
+                    raise ValueError("Non-finite values in training logits.")
                 loss = crit(logits, y)
 
             scaler.scale(loss).backward()
