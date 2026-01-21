@@ -1,7 +1,17 @@
+#!/usr/bin/env python3
+# train_mobilenet_video.py
+#
+# MobileNetV3-Large backbone + temporal conv head for binary video classification
+# Logs JSONL compatible with your visualize_training.py script:
+#   outputs/<exp>/logs/train.log            ({"step","train_loss",...})
+#   outputs/<exp>/results/val_metrics.jsonl ({"epoch","loss","acc","f1","confusion_matrix", "tp","tn","fp","fn",...})
 
 import os
+import json
+import time
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 
 import torch
@@ -35,8 +45,8 @@ class CFG:
     root: str = "./data/dataset"
 
     T: int = 8
-    H: int = 160
-    W: int = 160
+    H: int = 192
+    W: int = 192
 
     # Frame sampling inside a clip
     stride: int = 1
@@ -56,8 +66,41 @@ class CFG:
     # Mixed precision (only active on CUDA)
     amp: bool = True
 
+    # Prediction threshold for metrics
+    threshold: float = 0.5
+
     extensions: Tuple[str, ...] = (".jpg", ".jpeg", ".png")
     video_extensions: Tuple[str, ...] = (".mp4", ".mov", ".avi")
+
+
+# -------------------------
+# JSONL logging helpers
+# -------------------------
+def append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def safe_div(a: float, b: float) -> float:
+    return float(a / b) if b != 0 else 0.0
+
+
+def binary_confusion_counts(logits: torch.Tensor, y: torch.Tensor, threshold: float = 0.5):
+    """
+    logits: [B,1] raw
+    y:      [B,1] float {0,1}
+    returns tp, tn, fp, fn (python ints)
+    """
+    probs = torch.sigmoid(logits)
+    pred = (probs >= threshold).to(torch.int64)
+    yt = (y >= 0.5).to(torch.int64)
+
+    tp = ((pred == 1) & (yt == 1)).sum().item()
+    tn = ((pred == 0) & (yt == 0)).sum().item()
+    fp = ((pred == 1) & (yt == 0)).sum().item()
+    fn = ((pred == 0) & (yt == 1)).sum().item()
+    return tp, tn, fp, fn
 
 
 # -------------------------
@@ -94,13 +137,21 @@ class ClipFolderDataset(Dataset):
       split_dir/launch/<clip_id>/*
       split_dir/no_launch/<clip_id>/*
 
-    Each clip is a folder containing ordered frame images.
     Returns:
       x: [T, 3, H, W]
       y: [1] float (0.0 or 1.0)
     """
-    def __init__(self, split_dir: str, T: int, H: int, W: int, stride: int,
-                 exts: Tuple[str, ...], video_exts: Tuple[str, ...], train: bool):
+    def __init__(
+        self,
+        split_dir: str,
+        T: int,
+        H: int,
+        W: int,
+        stride: int,
+        exts: Tuple[str, ...],
+        video_exts: Tuple[str, ...],
+        train: bool,
+    ):
         self.split_dir = split_dir
         self.T = T
         self.H = H
@@ -110,6 +161,9 @@ class ClipFolderDataset(Dataset):
         self.video_exts = video_exts
         self.train = train
 
+        # samples: (payload, label, kind)
+        #   kind="video": payload=str path
+        #   kind="frames": payload=List[str] frame paths
         self.samples: List[Tuple[object, int, str]] = []
 
         for label_name, y in [("launch", 1), ("no_launch", 0)]:
@@ -193,7 +247,7 @@ class ClipFolderDataset(Dataset):
         clip = []
 
         if kind == "video":
-            video, _, _ = read_video(sample, pts_unit="sec")  # [T, H, W, C]
+            video, _, _ = read_video(sample, pts_unit="sec")  # [Tv, H, W, C]
             if video.numel() == 0:
                 raise RuntimeError(f"Empty video: {sample}")
             inds = self._sample_indices(video.shape[0])
@@ -284,30 +338,55 @@ class EdgeVideoModel(nn.Module):
 # Eval
 # -------------------------
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, threshold: float = 0.5):
     model.eval()
-    total = 0
-    correct = 0
-    loss_sum = 0.0
-
     crit = nn.BCEWithLogitsLoss()
+
+    total = 0
+    loss_sum = 0.0
+    tp = tn = fp = fn = 0
 
     for x, y in loader:
         x = x.to(device)
         y = y.to(device)
 
-        logit = model(x)
-        loss = crit(logit, y)
+        logits = model(x)
+        loss = crit(logits, y)
 
-        # accumulate per-sample loss
         loss_sum += loss.item() * x.size(0)
-
-        # predictions
-        pred = (torch.sigmoid(logit) >= 0.5).float()
-        correct += (pred == y).sum().item()
         total += x.size(0)
 
-    return loss_sum / max(total, 1), correct / max(total, 1)
+        b_tp, b_tn, b_fp, b_fn = binary_confusion_counts(logits, y, threshold=threshold)
+        tp += b_tp
+        tn += b_tn
+        fp += b_fp
+        fn += b_fn
+
+    acc = safe_div(tp + tn, tp + tn + fp + fn)
+    precision = safe_div(tp, tp + fp)
+    recall = safe_div(tp, tp + fn)
+    f1 = safe_div(2 * precision * recall, precision + recall)
+
+    # confusion matrix format expected by your visualizer:
+    # [[TN, FP],
+    #  [FN, TP]]
+    cm = [[int(tn), int(fp)],
+          [int(fn), int(tp)]]
+
+    return {
+        "loss": safe_div(loss_sum, max(total, 1)),
+        "acc": float(acc),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+        "tp": int(tp),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "confusion_matrix": cm,
+        "n": int(total),
+        "threshold": float(threshold),
+    }
 
 
 # -------------------------
@@ -318,14 +397,32 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
 
+    # Experiment directory compatible with visualize_training.py defaults
+    exp_dir = Path(f"outputs/exp_mobilenet_T{cfg.T}_{cfg.H}")
+    logs_path = exp_dir / "logs" / "train.log"
+    val_path = exp_dir / "results" / "val_metrics.jsonl"
+    ckpt_dir = exp_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save config for reproducibility
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    (exp_dir / "config.json").write_text(json.dumps(cfg.__dict__, indent=2))
+
+    # Clear old logs if they exist
+    for p in [logs_path, val_path]:
+        if p.exists():
+            p.unlink()
+
     train_dir = os.path.join(cfg.root, "train")
     val_dir = os.path.join(cfg.root, "val")
 
     train_ds = ClipFolderDataset(
-        train_dir, cfg.T, cfg.H, cfg.W, cfg.stride, cfg.extensions, cfg.video_extensions, train=True
+        train_dir, cfg.T, cfg.H, cfg.W, cfg.stride,
+        cfg.extensions, cfg.video_extensions, train=True
     )
     val_ds = ClipFolderDataset(
-        val_dir, cfg.T, cfg.H, cfg.W, cfg.stride, cfg.extensions, cfg.video_extensions, train=False
+        val_dir, cfg.T, cfg.H, cfg.W, cfg.stride,
+        cfg.extensions, cfg.video_extensions, train=False
     )
 
     train_loader = DataLoader(
@@ -352,13 +449,20 @@ def train():
     pos_weight = torch.tensor([cfg.pos_weight], device=device)
     crit = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
+    # AMP setup (works across torch versions)
     if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
         scaler = torch.amp.GradScaler(device.type, enabled=(cfg.amp and device.type == "cuda"))
+
+        def autocast_ctx():
+            return torch.amp.autocast(device_type=device.type, enabled=(cfg.amp and device.type == "cuda"))
     else:
         scaler = torch.cuda.amp.GradScaler(enabled=(cfg.amp and device.type == "cuda"))
 
-    best_val_acc = 0.0
-    os.makedirs("checkpoints", exist_ok=True)
+        def autocast_ctx():
+            return torch.cuda.amp.autocast(enabled=(cfg.amp and device.type == "cuda"))
+
+    best_val_f1 = -1.0
+    global_step = 0
 
     for epoch in range(1, cfg.epochs + 1):
         model.train()
@@ -371,27 +475,68 @@ def train():
 
             opt.zero_grad(set_to_none=True)
 
-            with torch.cuda.amp.autocast(enabled=(cfg.amp and device.type == "cuda")):
-                logit = model(x)
-                loss = crit(logit, y)
+            with autocast_ctx():
+                logits = model(x)
+                loss = crit(logits, y)
 
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
 
-            running += loss.item() * x.size(0)
-            total += x.size(0)
+            bs = x.size(0)
+            running += loss.item() * bs
+            total += bs
+
+            global_step += 1
+            append_jsonl(logs_path, {
+                "time": time.time(),
+                "step": int(global_step),
+                "epoch": int(epoch),
+                "train_loss": float(loss.item()),
+                "batch_size": int(bs),
+            })
 
         train_loss = running / max(total, 1)
-        val_loss, val_acc = evaluate(model, val_loader, device)
 
-        print(f"Epoch {epoch:02d} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc:.3f}")
+        val_metrics = evaluate(model, val_loader, device, threshold=cfg.threshold)
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save({"model": model.state_dict(), "cfg": cfg.__dict__}, "checkpoints/best.pt")
+        append_jsonl(val_path, {
+            "time": time.time(),
+            "epoch": int(epoch),
+            "loss": float(val_metrics["loss"]),
+            "acc": float(val_metrics["acc"]),
+            "f1": float(val_metrics["f1"]),
+            "precision": float(val_metrics["precision"]),
+            "recall": float(val_metrics["recall"]),
+            "tp": int(val_metrics["tp"]),
+            "tn": int(val_metrics["tn"]),
+            "fp": int(val_metrics["fp"]),
+            "fn": int(val_metrics["fn"]),
+            "confusion_matrix": val_metrics["confusion_matrix"],
+            "n": int(val_metrics["n"]),
+            "threshold": float(val_metrics["threshold"]),
+        })
 
-    print("Best val_acc:", best_val_acc)
+        print(
+            f"Epoch {epoch:02d} | "
+            f"train_loss={train_loss:.4f} | "
+            f"val_loss={val_metrics['loss']:.4f} | "
+            f"val_acc={val_metrics['acc']:.3f} | "
+            f"val_f1={val_metrics['f1']:.3f} | "
+            f"TP={val_metrics['tp']} TN={val_metrics['tn']} FP={val_metrics['fp']} FN={val_metrics['fn']}"
+        )
+
+        if val_metrics["f1"] > best_val_f1:
+            best_val_f1 = val_metrics["f1"]
+            torch.save(
+                {"model": model.state_dict(), "cfg": cfg.__dict__, "best_val_f1": best_val_f1},
+                ckpt_dir / "best.pt"
+            )
+
+    print("Best val_f1:", best_val_f1)
+    print("Logs written to:", logs_path)
+    print("Val metrics written to:", val_path)
+    print("Checkpoint written to:", ckpt_dir / "best.pt")
 
 
 if __name__ == "__main__":
