@@ -352,6 +352,8 @@ class EdgeVideoModel(nn.Module):
 def evaluate(model, loader, device, threshold: float = 0.5):
     model.eval()
     crit = nn.BCEWithLogitsLoss()
+    debug_checks = hasattr(model, "cfg") and getattr(model.cfg, "debug_checks", False)
+    debug_printed = False
 
     total = 0
     loss_sum = 0.0
@@ -361,14 +363,28 @@ def evaluate(model, loader, device, threshold: float = 0.5):
         x = x.to(device)
         y = y.to(device)
 
-        if hasattr(model, "cfg") and getattr(model.cfg, "debug_checks", False):
+        if debug_checks:
             if not torch.isfinite(x).all():
                 raise ValueError("Non-finite values in eval inputs.")
         logits = model(x)
         logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
-        if hasattr(model, "cfg") and getattr(model.cfg, "debug_checks", False):
+        if debug_checks:
             if not torch.isfinite(logits).all():
                 raise ValueError("Non-finite values in eval logits.")
+            if not debug_printed:
+                print(
+                    "[DEBUG] val x stats:",
+                    float(x.min().item()),
+                    float(x.max().item()),
+                    float(x.mean().item()),
+                )
+                print(
+                    "[DEBUG] val logits stats:",
+                    float(logits.min().item()),
+                    float(logits.max().item()),
+                    float(logits.mean().item()),
+                )
+                debug_printed = True
         loss = crit(logits, y)
 
         loss_sum += loss.item() * x.size(0)
