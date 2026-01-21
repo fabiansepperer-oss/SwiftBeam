@@ -94,7 +94,7 @@ def binary_confusion_counts(logits: torch.Tensor, y: torch.Tensor, threshold: fl
     returns tp, tn, fp, fn (python ints)
     """
     probs = torch.sigmoid(logits)
-    pred = (probs >= threshold).to(torch.int64)
+    pred = (probs > threshold).to(torch.int64)
     yt = (y >= 0.5).to(torch.int64)
 
     tp = ((pred == 1) & (yt == 1)).sum().item()
