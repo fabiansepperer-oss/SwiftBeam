@@ -68,7 +68,7 @@ class CFG:
 
     # Prediction threshold for metrics
     threshold: float = 0.5
-    debug_checks: bool = True
+    debug_checks: bool = False
 
     extensions: Tuple[str, ...] = (".jpg", ".jpeg", ".png")
     video_extensions: Tuple[str, ...] = (".mp4", ".mov", ".avi")
